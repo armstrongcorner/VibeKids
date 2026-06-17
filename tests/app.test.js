@@ -8,19 +8,29 @@ import { makeZipBuffer } from './helpers/zip.js';
 
 let tempDir;
 let app;
+let paths;
 
 beforeEach(async () => {
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibekids-app-'));
+  paths = {
+    baseDir: tempDir,
+    publicDir: path.join(tempDir, 'public'),
+    dataDir: path.join(tempDir, 'data'),
+    uploadsDir: path.join(tempDir, 'uploads'),
+    projectsDir: path.join(tempDir, 'projects'),
+    tempDir: path.join(tempDir, '.tmp'),
+    projectIndexPath: path.join(tempDir, 'data', 'projects.json')
+  };
+
+  await Promise.all([
+    fs.mkdir(paths.publicDir, { recursive: true }),
+    fs.mkdir(paths.dataDir, { recursive: true }),
+    fs.mkdir(paths.uploadsDir, { recursive: true }),
+    fs.mkdir(paths.projectsDir, { recursive: true })
+  ]);
+
   app = createApp({
-    paths: {
-      baseDir: tempDir,
-      publicDir: path.join(process.cwd(), 'public'),
-      dataDir: path.join(tempDir, 'data'),
-      uploadsDir: path.join(tempDir, 'uploads'),
-      projectsDir: path.join(tempDir, 'projects'),
-      tempDir: path.join(tempDir, '.tmp'),
-      projectIndexPath: path.join(tempDir, 'data', 'projects.json')
-    }
+    paths
   });
 });
 
@@ -73,5 +83,57 @@ describe('app', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toBe('Upload must include an index.html file');
+  });
+
+  it('returns a clear error when a project file is missing', async () => {
+    const response = await request(app)
+      .post('/api/projects')
+      .field('title', 'Missing file');
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('Upload must be a .zip file');
+  });
+
+  it('returns a clear error when a project zip is too large', async () => {
+    const limitedApp = createApp({
+      paths,
+      uploadFileSizeLimit: 10
+    });
+
+    const response = await request(limitedApp)
+      .post('/api/projects')
+      .field('title', 'Too large')
+      .attach('project', Buffer.alloc(11, 'a'), 'too-large.zip');
+
+    expect(response.status).toBe(413);
+    expect(response.body.error).toBe('Project zip must be 50 MB or smaller');
+  });
+
+  it('serves the runner shell from the configured public directory', async () => {
+    await fs.writeFile(path.join(paths.publicDir, 'runner.html'), '<!doctype html><h1>Runner</h1>');
+
+    const response = await request(app).get('/runner/hello-project');
+
+    expect(response.status).toBe(200);
+    expect(response.text).toContain('<h1>Runner</h1>');
+  });
+
+  it('serves project files from the configured projects directory', async () => {
+    await fs.mkdir(path.join(paths.projectsDir, 'hello-project'), { recursive: true });
+    await fs.writeFile(path.join(paths.projectsDir, 'hello-project', 'index.html'), '<h1>Hello</h1>');
+
+    const response = await request(app).get('/projects/hello-project/index.html');
+
+    expect(response.status).toBe(200);
+    expect(response.text).toContain('<h1>Hello</h1>');
+  });
+
+  it('serves upload files from the configured uploads directory', async () => {
+    await fs.writeFile(path.join(paths.uploadsDir, 'hello-project.zip'), 'zip archive');
+
+    const response = await request(app).get('/uploads/hello-project.zip');
+
+    expect(response.status).toBe(200);
+    expect(response.text).toBe('zip archive');
   });
 });

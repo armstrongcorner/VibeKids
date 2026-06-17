@@ -9,11 +9,12 @@ import { processProjectUpload } from './uploadProject.js';
 export function createApp(options = {}) {
   const app = express();
   const paths = createPaths(options.paths);
+  const uploadFileSizeLimit = options.uploadFileSizeLimit ?? 50 * 1024 * 1024;
   fs.mkdirSync(paths.tempDir, { recursive: true });
 
   const upload = multer({
     dest: paths.tempDir,
-    limits: { fileSize: 50 * 1024 * 1024 }
+    limits: { fileSize: uploadFileSizeLimit }
   });
 
   app.locals.paths = paths;
@@ -54,6 +55,16 @@ export function createApp(options = {}) {
   });
 
   app.use((error, _request, response, _next) => {
+    if (error instanceof multer.MulterError || error.code === 'LIMIT_FILE_SIZE') {
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        response.status(413).json({ error: 'Project zip must be 50 MB or smaller' });
+        return;
+      }
+
+      response.status(400).json({ error: error.message || 'Upload failed' });
+      return;
+    }
+
     const message = error.message || 'Something went wrong';
     const status = message.startsWith('Upload') || message.startsWith('Zip') ? 400 : 500;
     response.status(status).json({ error: message });
