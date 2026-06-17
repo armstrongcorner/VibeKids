@@ -135,6 +135,43 @@ describe('processProjectUpload', () => {
     });
   });
 
+  it('uses form metadata before manifest metadata', async () => {
+    const uploadPath = await writeUpload('robot.zip', {
+      'index.html': '<h1>Robot</h1>',
+      'manifest-cover.png': 'manifest image bytes',
+      'form-cover.png': 'form image bytes',
+      'manifest.json': JSON.stringify({
+        title: 'Manifest Robot',
+        description: 'Manifest description',
+        cover: 'manifest-cover.png',
+        tags: ['manifest', 'robot'],
+        date: '2026-06-17'
+      })
+    });
+
+    const project = await processProjectUpload({
+      file: { path: uploadPath, originalname: 'robot.zip' },
+      fields: {
+        title: 'Form Robot',
+        description: 'Form description',
+        cover: 'form-cover.png',
+        tags: 'form, override',
+        date: '2026-06-18'
+      },
+      paths,
+      now: () => new Date('2026-06-17T00:00:00.000Z')
+    });
+
+    expect(project).toMatchObject({
+      slug: 'form-robot',
+      title: 'Form Robot',
+      description: 'Form description',
+      cover: '/projects/form-robot/form-cover.png',
+      tags: ['form', 'override'],
+      date: '2026-06-18'
+    });
+  });
+
   it('rejects a zip without index.html', async () => {
     const uploadPath = await writeUpload('broken.zip', {
       'readme.txt': 'no entry point'
@@ -145,6 +182,21 @@ describe('processProjectUpload', () => {
       fields: { title: 'Broken' },
       paths
     })).rejects.toThrow('Upload must include an index.html file');
+  });
+
+  it('cleans up reserved project directory and copied zip when validation fails after slug reservation', async () => {
+    const uploadPath = await writeUpload('broken.zip', {
+      'readme.txt': 'no entry point'
+    });
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'broken.zip' },
+      fields: { title: 'Broken Project' },
+      paths
+    })).rejects.toThrow('Upload must include an index.html file');
+
+    await expect(fs.access(path.join(paths.projectsDir, 'broken-project'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(path.join(paths.uploadsDir, 'broken-project.zip'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects corrupt zip content with a zip filename', async () => {
