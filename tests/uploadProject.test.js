@@ -152,4 +152,30 @@ describe('processProjectUpload', () => {
       paths
     })).rejects.toThrow('Zip contains an unsafe path');
   });
+
+  it('rejects absolute unix path entries', async () => {
+    const uploadPath = await writeUpload('absolute.zip', {
+      '/absolute.txt': 'bad',
+      'index.html': '<h1>Absolute</h1>'
+    });
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'absolute.zip' },
+      fields: { title: 'Absolute' },
+      paths
+    })).rejects.toThrow('Zip contains an unsafe path');
+  });
+
+  it('rejects absolute windows drive path entries', async () => {
+    const uploadPath = await writeUpload('windows-absolute.zip', {
+      'C:/absolute.txt': 'bad',
+      'index.html': '<h1>Absolute</h1>'
+    });
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'windows-absolute.zip' },
+      fields: { title: 'Absolute' },
+      paths
+    })).rejects.toThrow('Zip contains an unsafe path');
+  });
 });

@@ -70,10 +70,19 @@ function assertSafeRelativePath(entryPath, message = 'Zip contains an unsafe pat
   }
 }
 
+function isYauzlUnsafePathError(error) {
+  return error.message?.startsWith('invalid relative path:') || error.message?.startsWith('absolute path:');
+}
+
 function openZip(zipPath) {
   return new Promise((resolve, reject) => {
     yauzl.open(zipPath, { lazyEntries: true }, (error, zipfile) => {
       if (error) {
+        if (isYauzlUnsafePathError(error)) {
+          reject(new Error('Zip contains an unsafe path'));
+          return;
+        }
+
         reject(new InvalidZipUploadError());
         return;
       }
@@ -113,8 +122,8 @@ function waitForEntry(zipfile) {
     };
     const onError = (error) => {
       cleanup();
-      if (error.message?.startsWith('invalid relative path:')) {
-        reject(error);
+      if (isYauzlUnsafePathError(error)) {
+        reject(new Error('Zip contains an unsafe path'));
         return;
       }
 
@@ -257,18 +266,7 @@ export async function processProjectUpload({ file, fields = {}, paths, now = () 
     await fs.copyFile(file.path, originalZipPath);
     savedOriginal = true;
 
-    let entryPaths;
-
-    try {
-      entryPaths = await extractZip(originalZipPath, extractionDir);
-    } catch (error) {
-      if (error.message?.startsWith('invalid relative path:')) {
-        throw new Error('Zip contains an unsafe path');
-      }
-
-      throw error;
-    }
-
+    const entryPaths = await extractZip(originalZipPath, extractionDir);
     const rootPath = findProjectRoot(entryPaths, extractionDir);
     const manifest = await readManifest(rootPath);
 
