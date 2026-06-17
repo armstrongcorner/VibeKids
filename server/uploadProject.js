@@ -6,6 +6,12 @@ import { pipeline } from 'node:stream/promises';
 import yauzl from 'yauzl';
 import { saveProject } from './projectStore.js';
 
+class InvalidZipUploadError extends Error {
+  constructor() {
+    super('Upload must be a .zip file');
+  }
+}
+
 function slugify(value) {
   const slug = String(value ?? '')
     .toLowerCase()
@@ -68,7 +74,7 @@ function openZip(zipPath) {
   return new Promise((resolve, reject) => {
     yauzl.open(zipPath, { lazyEntries: true }, (error, zipfile) => {
       if (error) {
-        reject(error);
+        reject(new InvalidZipUploadError());
         return;
       }
 
@@ -81,7 +87,7 @@ function openReadStream(zipfile, entry) {
   return new Promise((resolve, reject) => {
     zipfile.openReadStream(entry, (error, stream) => {
       if (error) {
-        reject(error);
+        reject(new InvalidZipUploadError());
         return;
       }
 
@@ -107,7 +113,12 @@ function waitForEntry(zipfile) {
     };
     const onError = (error) => {
       cleanup();
-      reject(error);
+      if (error.message?.startsWith('invalid relative path:')) {
+        reject(error);
+        return;
+      }
+
+      reject(new InvalidZipUploadError());
     };
 
     zipfile.once('entry', onEntry);
@@ -153,7 +164,7 @@ async function extractZip(zipPath, destination) {
 
 function findProjectRoot(entryPaths, extractionDir) {
   const files = entryPaths.filter((entryPath) => !entryPath.endsWith('/'));
-  const rootIndex = files.some((entryPath) => entryPath.toLowerCase() === 'index.html');
+  const rootIndex = files.some((entryPath) => entryPath === 'index.html');
 
   if (rootIndex) {
     return extractionDir;
@@ -163,7 +174,7 @@ function findProjectRoot(entryPaths, extractionDir) {
 
   if (topLevelNames.size === 1) {
     const [topLevelName] = [...topLevelNames];
-    const folderIndex = files.some((entryPath) => entryPath.toLowerCase() === `${topLevelName.toLowerCase()}/index.html`);
+    const folderIndex = files.some((entryPath) => entryPath === `${topLevelName}/index.html`);
 
     if (folderIndex) {
       return path.join(extractionDir, topLevelName);

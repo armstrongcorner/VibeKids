@@ -15,6 +15,12 @@ async function writeUpload(name, entries) {
   return uploadPath;
 }
 
+async function writeRawUpload(name, content) {
+  const uploadPath = path.join(tempDir, name);
+  await fs.writeFile(uploadPath, content);
+  return uploadPath;
+}
+
 beforeEach(async () => {
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibekids-upload-'));
   paths = {
@@ -108,6 +114,28 @@ describe('processProjectUpload', () => {
     await expect(processProjectUpload({
       file: { path: uploadPath, originalname: 'broken.zip' },
       fields: { title: 'Broken' },
+      paths
+    })).rejects.toThrow('Upload must include an index.html file');
+  });
+
+  it('rejects corrupt zip content with a zip filename', async () => {
+    const uploadPath = await writeRawUpload('fake.zip', 'not actually a zip');
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'fake.zip' },
+      fields: { title: 'Fake' },
+      paths
+    })).rejects.toThrow('Upload must be a .zip file');
+  });
+
+  it('rejects uppercase INDEX.HTML without lowercase index.html', async () => {
+    const uploadPath = await writeUpload('uppercase.zip', {
+      'INDEX.HTML': '<h1>Uppercase</h1>'
+    });
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'uppercase.zip' },
+      fields: { title: 'Uppercase' },
       paths
     })).rejects.toThrow('Upload must include an index.html file');
   });
