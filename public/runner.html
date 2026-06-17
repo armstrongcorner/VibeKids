@@ -17,11 +17,18 @@
 
     <main class="runner-shell">
       <h1 id="runner-title">Loading project...</h1>
+      <section
+        id="runner-error"
+        class="state-panel runner-error"
+        aria-live="polite"
+        hidden
+      ></section>
       <iframe
         id="project-frame"
         class="project-frame"
         title="Project preview"
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts"
+        hidden
       ></iframe>
     </main>
   </body>

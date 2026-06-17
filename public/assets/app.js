@@ -121,34 +121,58 @@ function slugFromPath() {
 async function initRunner() {
   const titleElement = document.querySelector('#runner-title');
   const frame = document.querySelector('#project-frame');
+  const errorElement = document.querySelector('#runner-error');
 
-  if (!titleElement || !frame) {
+  if (!titleElement || !frame || !errorElement) {
     return;
+  }
+
+  function showRunnerError(title, message) {
+    titleElement.textContent = title;
+    frame.hidden = true;
+    frame.removeAttribute('src');
+    errorElement.replaceChildren(
+      createElement('h2', { text: title }),
+      createElement('p', { text: message })
+    );
+    errorElement.hidden = false;
+  }
+
+  async function canLoadEntry(entryPath) {
+    const response = await fetch(entryPath, { method: 'HEAD' });
+    return response.ok;
   }
 
   const slug = slugFromPath();
 
   if (!slug) {
-    titleElement.textContent = 'Project not found';
-    frame.removeAttribute('src');
+    showRunnerError('Project files could not be loaded.', 'This project may be missing its index.html file.');
     return;
   }
 
   try {
     const projects = await fetchProjects();
     const project = projects.find((item) => item.slug === slug);
+    const entryPath = normalizeText(project?.entryPath);
 
-    if (!project || !normalizeText(project.entryPath)) {
-      titleElement.textContent = 'Project not found';
-      frame.removeAttribute('src');
+    if (!project || !entryPath) {
+      showRunnerError('Project files could not be loaded.', 'This project may be missing its index.html file.');
+      return;
+    }
+
+    const entryExists = await canLoadEntry(entryPath);
+    if (!entryExists) {
+      showRunnerError('Project files could not be loaded.', 'This project may be missing its index.html file.');
       return;
     }
 
     titleElement.textContent = normalizeText(project.title, 'Untitled project');
-    frame.src = project.entryPath;
+    errorElement.hidden = true;
+    errorElement.replaceChildren();
+    frame.hidden = false;
+    frame.src = entryPath;
   } catch {
-    titleElement.textContent = 'Could not load this project';
-    frame.removeAttribute('src');
+    showRunnerError('Project files could not be loaded.', 'This project may be missing its index.html file.');
   }
 }
 
