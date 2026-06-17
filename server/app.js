@@ -6,6 +6,45 @@ import { createPaths } from './paths.js';
 import { listProjects } from './projectStore.js';
 import { processProjectUpload } from './uploadProject.js';
 
+const uploadOriginError = 'Uploads must come from the Vibe Kids admin page';
+
+function firstForwardedValue(value) {
+  return typeof value === 'string' ? value.split(',')[0].trim() : '';
+}
+
+function requestOrigin(request) {
+  const forwardedProto = firstForwardedValue(request.get('x-forwarded-proto'));
+  const forwardedHost = firstForwardedValue(request.get('x-forwarded-host'));
+  const proto = forwardedProto || request.protocol;
+  const host = forwardedHost || request.get('host');
+
+  if (!proto || !host) {
+    return '';
+  }
+
+  try {
+    return new URL(`${proto}://${host}`).origin;
+  } catch {
+    return '';
+  }
+}
+
+function requireUploadOrigin(request, response, next) {
+  const origin = request.get('origin');
+
+  if (!origin) {
+    next();
+    return;
+  }
+
+  if (origin === 'null' || origin !== requestOrigin(request)) {
+    response.status(403).json({ error: uploadOriginError });
+    return;
+  }
+
+  next();
+}
+
 export function createApp(options = {}) {
   const app = express();
   const paths = createPaths(options.paths);
@@ -36,7 +75,7 @@ export function createApp(options = {}) {
     }
   });
 
-  app.post('/api/projects', upload.single('project'), async (request, response, next) => {
+  app.post('/api/projects', requireUploadOrigin, upload.single('project'), async (request, response, next) => {
     try {
       const project = await processProjectUpload({
         file: request.file,

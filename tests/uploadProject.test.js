@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { processProjectUpload } from '../server/uploadProject.js';
 import { listProjects } from '../server/projectStore.js';
-import { makeZipBuffer } from './helpers/zip.js';
+import { makeZipBuffer, makeZipBufferWithSizes } from './helpers/zip.js';
 
 let tempDir;
 let paths;
@@ -75,6 +75,25 @@ describe('processProjectUpload', () => {
 
     expect(project.entryPath).toBe('/projects/maze/index.html');
     await expect(fs.readFile(path.join(paths.projectsDir, 'maze', 'style.css'), 'utf8')).resolves.toContain('red');
+  });
+
+  it('accepts a single project folder when macOS metadata entries are present', async () => {
+    const uploadPath = await writeUpload('macos.zip', {
+      '.DS_Store': 'metadata',
+      '__MACOSX/._project': 'metadata',
+      'project/.DS_Store': 'metadata',
+      'project/index.html': '<h1>Project</h1>'
+    });
+
+    const project = await processProjectUpload({
+      file: { path: uploadPath, originalname: 'macos.zip' },
+      fields: { title: 'Mac Metadata' },
+      paths,
+      now: () => new Date('2026-06-17T00:00:00.000Z')
+    });
+
+    expect(project.entryPath).toBe('/projects/mac-metadata/index.html');
+    await expect(fs.readFile(path.join(paths.projectsDir, 'mac-metadata', 'index.html'), 'utf8')).resolves.toContain('Project');
   });
 
   it('stores concurrent same-title uploads with unique slugs and original zips', async () => {
@@ -172,6 +191,25 @@ describe('processProjectUpload', () => {
     });
   });
 
+  it('ignores a cover path when the extracted cover file does not exist', async () => {
+    const uploadPath = await writeUpload('robot.zip', {
+      'index.html': '<h1>Robot</h1>',
+      'manifest.json': JSON.stringify({
+        title: 'Robot Dance',
+        cover: 'missing-cover.png'
+      })
+    });
+
+    const project = await processProjectUpload({
+      file: { path: uploadPath, originalname: 'robot.zip' },
+      fields: {},
+      paths,
+      now: () => new Date('2026-06-17T00:00:00.000Z')
+    });
+
+    expect(project.cover).toBe('');
+  });
+
   it('rejects a zip without index.html', async () => {
     const uploadPath = await writeUpload('broken.zip', {
       'readme.txt': 'no entry point'
@@ -244,6 +282,35 @@ describe('processProjectUpload', () => {
       fields: { title: 'Escape' },
       paths
     })).rejects.toThrow('Zip contains an unsafe path');
+  });
+
+  it('rejects zips with too many entries before extraction completes', async () => {
+    const entries = Array.from({ length: 2001 }, (_, index) => [`files/file-${index}.txt`, 'x']);
+    entries.push(['index.html', '<h1>Too many</h1>']);
+    const uploadPath = await writeUpload('too-many.zip', Object.fromEntries(entries));
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'too-many.zip' },
+      fields: { title: 'Too Many' },
+      paths
+    })).rejects.toThrow('Upload has too many files');
+  });
+
+  it('rejects zips with too much declared uncompressed content before allocating it', async () => {
+    const uploadPath = await writeRawUpload('too-large-expanded.zip', makeZipBufferWithSizes([
+      {
+        path: 'index.html',
+        content: '<h1>Huge</h1>',
+        compressionMethod: 8,
+        uncompressedSize: 201 * 1024 * 1024
+      }
+    ]));
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'too-large-expanded.zip' },
+      fields: { title: 'Too Large Expanded' },
+      paths
+    })).rejects.toThrow('Upload is too large after extraction');
   });
 
   it('rejects absolute unix path entries', async () => {

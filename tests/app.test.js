@@ -73,6 +73,75 @@ describe('app', () => {
     expect(list.body.projects).toHaveLength(1);
   });
 
+  it('allows project uploads from the same browser origin', async () => {
+    const zip = makeZipBuffer({ 'index.html': '<h1>Hello</h1>' });
+
+    const response = await request(app)
+      .post('/api/projects')
+      .set('Host', 'vibekids.localhost')
+      .set('Origin', 'http://vibekids.localhost')
+      .field('title', 'Same Origin')
+      .attach('project', zip, 'same-origin.zip');
+
+    expect(response.status).toBe(201);
+    expect(response.body.project.slug).toBe('same-origin');
+  });
+
+  it('allows project uploads with no origin header for local tooling', async () => {
+    const zip = makeZipBuffer({ 'index.html': '<h1>Hello</h1>' });
+
+    const response = await request(app)
+      .post('/api/projects')
+      .field('title', 'No Origin')
+      .attach('project', zip, 'no-origin.zip');
+
+    expect(response.status).toBe(201);
+    expect(response.body.project.slug).toBe('no-origin');
+  });
+
+  it('rejects project uploads from null browser origins before reading the file', async () => {
+    const zip = makeZipBuffer({ 'index.html': '<h1>Hello</h1>' });
+
+    const response = await request(app)
+      .post('/api/projects')
+      .set('Origin', 'null')
+      .field('title', 'Null Origin')
+      .attach('project', zip, 'null-origin.zip');
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('Uploads must come from the Vibe Kids admin page');
+  });
+
+  it('rejects project uploads from cross-origin browser requests', async () => {
+    const zip = makeZipBuffer({ 'index.html': '<h1>Hello</h1>' });
+
+    const response = await request(app)
+      .post('/api/projects')
+      .set('Host', 'vibekids.localhost')
+      .set('Origin', 'http://evil.localhost')
+      .field('title', 'Cross Origin')
+      .attach('project', zip, 'cross-origin.zip');
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('Uploads must come from the Vibe Kids admin page');
+  });
+
+  it('allows same-origin uploads behind a reverse proxy', async () => {
+    const zip = makeZipBuffer({ 'index.html': '<h1>Hello</h1>' });
+
+    const response = await request(app)
+      .post('/api/projects')
+      .set('Host', '127.0.0.1:4321')
+      .set('X-Forwarded-Host', 'vibekids.localhost')
+      .set('X-Forwarded-Proto', 'https')
+      .set('Origin', 'https://vibekids.localhost')
+      .field('title', 'Proxy Origin')
+      .attach('project', zip, 'proxy-origin.zip');
+
+    expect(response.status).toBe(201);
+    expect(response.body.project.slug).toBe('proxy-origin');
+  });
+
   it('returns a clear error for an invalid project zip', async () => {
     const zip = makeZipBuffer({ 'readme.txt': 'missing index' });
 

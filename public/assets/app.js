@@ -66,6 +66,11 @@ function renderProjectCard(project) {
     createElement('p', { text: description })
   );
 
+  const date = normalizeText(project.date);
+  if (date) {
+    body.append(createElement('p', { className: 'project-date', text: date }));
+  }
+
   const tags = Array.isArray(project.tags) ? project.tags.filter((tag) => normalizeText(tag)) : [];
   if (tags.length > 0) {
     const tagList = createElement('div', { className: 'tag-list' });

@@ -6,6 +6,9 @@ import { pipeline } from 'node:stream/promises';
 import yauzl from 'yauzl';
 import { saveProject } from './projectStore.js';
 
+const maxZipEntries = 2000;
+const maxUncompressedZipSize = 200 * 1024 * 1024;
+
 class InvalidZipUploadError extends Error {
   constructor() {
     super('Upload must be a .zip file');
@@ -27,6 +30,17 @@ function stripZipExtension(filename) {
 
 function normalizeZipPath(entryPath) {
   return entryPath.replaceAll('\\', '/');
+}
+
+function isKnownOsMetadataEntry(entryPath) {
+  const normalized = normalizeZipPath(entryPath).replace(/\/+$/g, '');
+
+  return (
+    normalized === '.DS_Store' ||
+    normalized.endsWith('/.DS_Store') ||
+    normalized === '__MACOSX' ||
+    normalized.startsWith('__MACOSX/')
+  );
 }
 
 function isUnsafeRelativePath(entryPath) {
@@ -115,6 +129,8 @@ function waitForEntry(zipfile) {
 async function extractZip(zipPath, destination) {
   const zipfile = await openZip(zipPath);
   const entryPaths = [];
+  let entryCount = 0;
+  let uncompressedSize = 0;
 
   try {
     while (true) {
@@ -126,6 +142,18 @@ async function extractZip(zipPath, destination) {
 
       const entryPath = normalizeZipPath(entry.fileName);
       assertSafeRelativePath(entryPath);
+      entryCount += 1;
+
+      if (entryCount > maxZipEntries) {
+        throw new Error('Upload has too many files');
+      }
+
+      uncompressedSize += entry.uncompressedSize;
+
+      if (uncompressedSize > maxUncompressedZipSize) {
+        throw new Error('Upload is too large after extraction');
+      }
+
       entryPaths.push(entryPath);
 
       if (entryPath.endsWith('/')) {
@@ -147,7 +175,7 @@ async function extractZip(zipPath, destination) {
 }
 
 function findProjectRoot(entryPaths, extractionDir) {
-  const files = entryPaths.filter((entryPath) => !entryPath.endsWith('/'));
+  const files = entryPaths.filter((entryPath) => !entryPath.endsWith('/') && !isKnownOsMetadataEntry(entryPath));
   const rootIndex = files.some((entryPath) => entryPath === 'index.html');
 
   if (rootIndex) {
@@ -203,7 +231,16 @@ function parseTags(fields, manifest) {
   return [];
 }
 
-function resolveCover(slug, fields, manifest) {
+async function fileExists(filePath) {
+  try {
+    const stats = await fs.stat(filePath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function resolveCover(slug, projectRoot, fields, manifest) {
   const cover = firstString(fields.cover, manifest.cover);
 
   if (!cover) {
@@ -211,7 +248,13 @@ function resolveCover(slug, fields, manifest) {
   }
 
   assertSafeRelativePath(cover, 'Zip contains an unsafe path');
-  return `/projects/${slug}/${normalizeZipPath(cover)}`;
+  const coverPath = normalizeZipPath(cover);
+
+  if (!(await fileExists(path.join(projectRoot, coverPath)))) {
+    return '';
+  }
+
+  return `/projects/${slug}/${coverPath}`;
 }
 
 function validateUpload(file) {
@@ -274,7 +317,7 @@ export async function processProjectUpload({ file, fields = {}, paths, now = () 
     const description = firstString(fields.description, manifest.description);
     const tags = parseTags(fields, manifest);
     const date = firstString(fields.date, manifest.date, createdAt.slice(0, 10));
-    const cover = resolveCover(slug, fields, manifest);
+    const cover = await resolveCover(slug, rootPath, fields, manifest);
 
     await fs.cp(rootPath, finalProjectDir, { recursive: true, force: false, errorOnExist: true });
 
