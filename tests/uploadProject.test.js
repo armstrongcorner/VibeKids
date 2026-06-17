@@ -77,6 +77,35 @@ describe('processProjectUpload', () => {
     await expect(fs.readFile(path.join(paths.projectsDir, 'maze', 'style.css'), 'utf8')).resolves.toContain('red');
   });
 
+  it('stores concurrent same-title uploads with unique slugs and original zips', async () => {
+    const firstUploadPath = await writeUpload('first.zip', {
+      'index.html': '<h1>First Space Game</h1>'
+    });
+    const secondUploadPath = await writeUpload('second.zip', {
+      'index.html': '<h1>Second Space Game</h1>'
+    });
+
+    const [firstProject, secondProject] = await Promise.all([
+      processProjectUpload({
+        file: { path: firstUploadPath, originalname: 'first.zip' },
+        fields: { title: 'Space Game' },
+        paths,
+        now: () => new Date('2026-06-17T00:00:00.000Z')
+      }),
+      processProjectUpload({
+        file: { path: secondUploadPath, originalname: 'second.zip' },
+        fields: { title: 'Space Game' },
+        paths,
+        now: () => new Date('2026-06-17T00:00:00.000Z')
+      })
+    ]);
+
+    expect([firstProject.slug, secondProject.slug].sort()).toEqual(['space-game', 'space-game-2']);
+    await expect(fs.access(path.join(paths.uploadsDir, 'space-game.zip'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(paths.uploadsDir, 'space-game-2.zip'))).resolves.toBeUndefined();
+    await expect(listProjects(paths.projectIndexPath)).resolves.toHaveLength(2);
+  });
+
   it('uses manifest metadata when form fields are missing', async () => {
     const uploadPath = await writeUpload('robot.zip', {
       'index.html': '<h1>Robot</h1>',
@@ -126,6 +155,18 @@ describe('processProjectUpload', () => {
       fields: { title: 'Fake' },
       paths
     })).rejects.toThrow('Upload must be a .zip file');
+  });
+
+  it('removes the provided temp file when upload extension is invalid', async () => {
+    const uploadPath = await writeRawUpload('not-a-zip.txt', 'not a zip');
+
+    await expect(processProjectUpload({
+      file: { path: uploadPath, originalname: 'not-a-zip.txt' },
+      fields: { title: 'Invalid' },
+      paths
+    })).rejects.toThrow('Upload must be a .zip file');
+
+    await expect(fs.access(uploadPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects uppercase INDEX.HTML without lowercase index.html', async () => {

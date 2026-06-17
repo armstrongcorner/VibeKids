@@ -25,31 +25,6 @@ function stripZipExtension(filename) {
   return path.basename(filename, path.extname(filename));
 }
 
-async function pathExists(filePath) {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return false;
-    }
-
-    throw error;
-  }
-}
-
-async function uniqueSlug(baseSlug, projectsDir) {
-  let slug = baseSlug;
-  let suffix = 2;
-
-  while (await pathExists(path.join(projectsDir, slug))) {
-    slug = `${baseSlug}-${suffix}`;
-    suffix += 1;
-  }
-
-  return slug;
-}
-
 function normalizeZipPath(entryPath) {
   return entryPath.replaceAll('\\', '/');
 }
@@ -245,23 +220,48 @@ function validateUpload(file) {
   }
 }
 
+async function reserveProjectDirectory(baseSlug, projectsDir) {
+  await fs.mkdir(projectsDir, { recursive: true });
+
+  let suffix = 1;
+
+  while (true) {
+    const slug = suffix === 1 ? baseSlug : `${baseSlug}-${suffix}`;
+    const projectDir = path.join(projectsDir, slug);
+
+    try {
+      await fs.mkdir(projectDir);
+      return { slug, projectDir };
+    } catch (error) {
+      if (error.code === 'EEXIST') {
+        suffix += 1;
+        continue;
+      }
+
+      throw error;
+    }
+  }
+}
+
 export async function processProjectUpload({ file, fields = {}, paths, now = () => new Date() }) {
-  validateUpload(file);
-
-  const timestamp = now();
-  const createdAt = timestamp.toISOString();
-  const sourceName = firstString(fields.title) || stripZipExtension(file.originalname);
-  const slug = await uniqueSlug(slugify(sourceName), paths.projectsDir);
-  const originalZipPath = path.join(paths.uploadsDir, `${slug}.zip`);
-  const extractionDir = path.join(paths.tempDir, `upload-${slug}-${randomUUID()}`);
-  const finalProjectDir = path.join(paths.projectsDir, slug);
-
-  let movedProject = false;
+  let extractionDir;
+  let finalProjectDir;
+  let originalZipPath;
   let savedOriginal = false;
 
   try {
+    validateUpload(file);
+
+    const timestamp = now();
+    const createdAt = timestamp.toISOString();
+    const sourceName = firstString(fields.title) || stripZipExtension(file.originalname);
+    const reservedProject = await reserveProjectDirectory(slugify(sourceName), paths.projectsDir);
+    const slug = reservedProject.slug;
+    finalProjectDir = reservedProject.projectDir;
+    originalZipPath = path.join(paths.uploadsDir, `${slug}.zip`);
+    extractionDir = path.join(paths.tempDir, `upload-${slug}-${randomUUID()}`);
+
     await fs.mkdir(paths.uploadsDir, { recursive: true });
-    await fs.mkdir(paths.projectsDir, { recursive: true });
     await fs.mkdir(extractionDir, { recursive: true });
     await fs.copyFile(file.path, originalZipPath);
     savedOriginal = true;
@@ -276,8 +276,7 @@ export async function processProjectUpload({ file, fields = {}, paths, now = () 
     const date = firstString(fields.date, manifest.date, createdAt.slice(0, 10));
     const cover = resolveCover(slug, fields, manifest);
 
-    await fs.rename(rootPath, finalProjectDir);
-    movedProject = true;
+    await fs.cp(rootPath, finalProjectDir, { recursive: true, force: false, errorOnExist: true });
 
     const project = {
       id: randomUUID(),
@@ -296,17 +295,22 @@ export async function processProjectUpload({ file, fields = {}, paths, now = () 
 
     return project;
   } catch (error) {
-    if (movedProject) {
+    if (finalProjectDir) {
       await fs.rm(finalProjectDir, { recursive: true, force: true });
     }
 
-    if (savedOriginal) {
+    if (savedOriginal && originalZipPath) {
       await fs.rm(originalZipPath, { force: true });
     }
 
     throw error;
   } finally {
-    await fs.rm(extractionDir, { recursive: true, force: true });
-    await fs.rm(file.path, { force: true });
+    if (extractionDir) {
+      await fs.rm(extractionDir, { recursive: true, force: true });
+    }
+
+    if (file?.path) {
+      await fs.rm(file.path, { force: true });
+    }
   }
 }
